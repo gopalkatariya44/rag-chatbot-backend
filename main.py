@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 import uvicorn
-from app.api import auth, documents, chat, sessions
+from app.api import auth, documents, chat, sessions, health
 from app.db.session import init_db
     
 @asynccontextmanager
@@ -23,6 +23,7 @@ app.include_router(sessions.router)
 app.include_router(chat.router)
 app.include_router(auth.router)
 app.include_router(documents.router)
+app.include_router(health.router)
 
 @app.get("/")
 async def root():
