@@ -4,12 +4,13 @@ from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from app.api import auth, documents, chat, sessions, health
-from app.db.session import init_db
+from app.db.session import init_db, init_db_vector
 from app.core.config import settings
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    await init_db_vector()
     await init_db()
     yield
     # Shutdown

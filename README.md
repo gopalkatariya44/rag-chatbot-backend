@@ -144,3 +144,14 @@ alembic upgrade head
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+
+
+# Mac Installation
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source $HOME/.cargo/env
+rustc --version
+poetry run pip install --upgrade pip setuptools
+poetry cache clear --all pypi
+poetry install
+
