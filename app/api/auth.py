@@ -1,6 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
+from pydantic import BaseModel
+from typing import Dict, Optional, List
+from datetime import datetime
 
 from app.core.security import get_password_hash, verify_password, create_access_token, get_current_user
 from app.db.repositories.users import UserRepository
@@ -9,6 +12,20 @@ from app.models.users import UserCreate, UserOut
 
 router = APIRouter(tags=["Auth"])
 
+# Add these new models
+class ModelPreferences(BaseModel):
+    provider: str
+    embedding_model: Optional[str] = None
+    chat_model: Optional[str] = None
+
+class APIKeys(BaseModel):
+    openai: Optional[str] = None
+    google: Optional[str] = None
+
+class APIKeyResponse(BaseModel):
+    provider: str
+    key: str
+    created_at: datetime
 
 @router.post("/register", response_model=UserOut)
 async def register(user: UserCreate, db: AsyncSession = Depends(get_db)):
@@ -42,11 +59,13 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSessi
     access_token = create_access_token(data={"sub": user.email})
     return {"access_token": access_token, "token_type": "bearer"}
 
+class APIKeyRequest(BaseModel):
+    provider: str
+    api_key: str
 
 @router.post("/api-keys")
 async def add_api_key(
-        provider: str,
-        api_key: str,
+        request: APIKeyRequest,
         db: AsyncSession = Depends(get_db),
         current_user: UserOut = Depends(get_current_user),
 ):
@@ -66,7 +85,7 @@ async def add_api_key(
      - https://aistudio.google.com/apikey
     """
     user_repo = UserRepository(db)
-    await user_repo.add_api_key(current_user.id, provider, api_key)
+    await user_repo.add_api_key(current_user.id, request.provider, request.api_key)
     return {"detail": "API key added successfully"}
 
 
@@ -95,12 +114,15 @@ async def delete_api_key(
         )
     return {"detail": "API key deleted successfully"}
 
+class ModelPreferencesRequest(BaseModel):
+    provider: str
+    embedding_model: str
+    chat_model: str
+
 
 @router.put("/model-preferences")
 async def set_model_preferences(
-        provider: str,  # Add provider as a parameter
-        embedding_model: str,
-        chat_model: str,
+        request: ModelPreferencesRequest,
         db: AsyncSession = Depends(get_db),
         current_user: UserOut = Depends(get_current_user),
 ):
@@ -121,11 +143,73 @@ async def set_model_preferences(
     user_repo = UserRepository(db)
     try:
         preferences = await user_repo.set_model_preferences(
-            current_user.id, provider, embedding_model, chat_model
+            current_user.id, request.provider, request.embedding_model, request.chat_model
         )
         return preferences
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(e),
+        )
+
+@router.get("/api-keys", response_model=List[APIKeyResponse])
+async def get_api_keys(
+    current_user: UserOut = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get list of saved API keys for the current user
+    
+    Returns:
+        List of API keys with their providers and creation dates
+    """
+    try:
+        user_repo = UserRepository(db)
+        api_keys = await user_repo.get_all_api_keys(current_user.id)
+        
+        return [
+            APIKeyResponse(
+                provider=key.provider,
+                key=key.encrypted_key,  # This will be decrypted by the repository
+                created_at=key.created_at
+            )
+            for key in api_keys
+        ]
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error retrieving API keys: {str(e)}"
+        )
+
+@router.get("/model-preferences", response_model=ModelPreferences)
+async def get_preferences(
+    current_user: UserOut = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get model preferences for the current user
+    
+    Returns:
+        ModelPreferences containing provider and model settings
+    """
+    try:
+        user_repo = UserRepository(db)
+        user = await user_repo.get_user_with_preferences(current_user.id)
+        
+        if not user or not user.model_preferences:
+            return ModelPreferences(
+                provider="openai",  # Default provider
+                embedding_model="text-embedding-3-small",  # Default embedding model
+                chat_model="gpt-3.5-turbo"  # Default chat model
+            )
+            
+        return ModelPreferences(
+            provider=user.model_preferences.provider,
+            embedding_model=user.model_preferences.embedding_model,
+            chat_model=user.model_preferences.chat_model
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error retrieving model preferences: {str(e)}"
         )

@@ -2,7 +2,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from typing import Optional
+from typing import Optional, List
 
 from app.core.crypto import encrypt_key, decrypt_key
 from app.db.models import User, UserModelPreference, UserAPIKey
@@ -68,16 +68,32 @@ class UserRepository:
             return decrypt_key(api_key.encrypted_key)
         return None
 
-    async def delete_api_key(self, user_id: UUID, provider: str):
-        result = await self.db.execute(
-            select(UserAPIKey).filter(UserAPIKey.user_id == user_id, UserAPIKey.provider == provider)
-        )
-        api_key = result.scalars().first()
-        if api_key:
-            self.db.delete(api_key)
-            await self.db.commit()
-            return True
-        return False
+    async def delete_api_key(self, user_id: UUID, provider: str) -> bool:
+        """Delete an API key for a user and provider"""
+        try:
+            # First find the key
+            result = await self.db.execute(
+                select(UserAPIKey).filter(
+                    UserAPIKey.user_id == user_id,
+                    UserAPIKey.provider == provider
+                )
+            )
+            api_key = result.scalars().first()
+            
+            if api_key:
+                # Delete the key
+                await self.db.delete(api_key)
+                await self.db.commit()
+                print(f"Successfully deleted API key for provider {provider}")
+                return True
+            
+            print(f"No API key found for provider {provider}")
+            return False
+            
+        except Exception as e:
+            print(f"Error deleting API key: {str(e)}")
+            await self.db.rollback()
+            raise
 
     async def get_user_with_preferences(self, user_id: UUID) -> Optional[User]:
         """Get user with model preferences"""
@@ -87,3 +103,16 @@ class UserRepository:
             .filter(User.id == user_id)
         )
         return result.scalar_one_or_none()
+
+    async def get_all_api_keys(self, user_id: UUID) -> List[UserAPIKey]:
+        """Get all API keys for a user"""
+        result = await self.db.execute(
+            select(UserAPIKey).filter(UserAPIKey.user_id == user_id)
+        )
+        api_keys = result.scalars().all()
+        
+        # Decrypt the keys before returning
+        for key in api_keys:
+            key.encrypted_key = decrypt_key(key.encrypted_key)
+        
+        return api_keys

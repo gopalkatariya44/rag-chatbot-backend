@@ -15,10 +15,11 @@ from app.models.users import UserOut
 # Password hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl=settings.API_V1_STR + "/login")
 
 # Add these constants at the top
 MIN_PASSWORD_LENGTH = 8
+
 
 async def get_current_user(
         token: str = Depends(oauth2_scheme),

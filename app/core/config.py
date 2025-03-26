@@ -22,6 +22,8 @@ class Settings(BaseSettings):
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     ]
 
+    DATABASE_LOGS: bool = False
+
     
     @validator("DATABASE_URL")
     def validate_database_url(cls, v):

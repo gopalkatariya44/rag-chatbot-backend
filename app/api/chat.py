@@ -1,10 +1,11 @@
 from typing import Optional, List, Dict, Any
-from uuid import uuid4
+from uuid import uuid4, UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_current_user, get_api_key_for_provider
+from app.db.models import ChatSession, ChatMessage
 from app.db.session import get_db
 from app.models.users import UserOut
 from app.services.chat_flow import ChatFlow
@@ -89,8 +90,18 @@ async def chat(
         # Get or create session state
         session_id = input.session_id
         if not session_id:
+            # Generate new session ID
             session_id = str(uuid4())
             state = chat_flow.get_initial_state(session_id)
+            
+            # Create new chat session in database
+            new_session = ChatSession(
+                id=UUID(session_id),
+                user_id=current_user.id
+            )
+            db.add(new_session)
+            # Commit the session immediately to avoid foreign key issues
+            await db.commit()
         else:
             state = await checkpointer.load(session_id)
             if not state:
@@ -104,10 +115,29 @@ async def chat(
                     detail="You don't have access to this chat session"
                 )
 
-        # Process message
-        state["current_input"] = input.message
         try:
+            # Save user message
+            user_message = ChatMessage(
+                session_id=UUID(session_id),
+                role="human",
+                content=input.message
+            )
+            db.add(user_message)
+            await db.commit()  # Commit user message
+
+            # Process message
+            state["current_input"] = input.message
             state = await chat_flow.process(state)
+            
+            # Save AI response
+            ai_message = ChatMessage(
+                session_id=UUID(session_id),
+                role="ai",
+                content=state["current_output"]
+            )
+            db.add(ai_message)
+            await db.commit()  # Commit AI message
+
             context = [
                 DocumentContext(
                     content=doc["page_content"],
@@ -117,25 +147,24 @@ async def chat(
                 )
                 for doc in (state.get("current_context") or [])
             ]
-        except Exception as e:
-            print(f"Error in chat_flow.process: {str(e)}")
-            state["current_output"] = "Sorry, I encountered an error. Please check your configuration."
-            state["conversation_count"] = 0
-            context = []
 
-        # Save state
-        await checkpointer.save(session_id, state)
-        
-        return ChatResponse(
-            response=state["current_output"],
-            session_id=session_id,
-            conversation_count=state["conversation_count"],
-            context=context
-        )
-        
-    except HTTPException:
-        raise
+            # Save state
+            await checkpointer.save(session_id, state)
+            
+            return ChatResponse(
+                response=state["current_output"],
+                session_id=session_id,
+                conversation_count=state["conversation_count"],
+                context=context
+            )
+
+        except Exception as e:
+            await db.rollback()
+            print(f"Error processing chat: {str(e)}")
+            raise
+
     except Exception as e:
+        await db.rollback()
         print(f"Error in chat endpoint: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
